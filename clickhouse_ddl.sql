@@ -106,4 +106,24 @@ ENGINE = ReplacingMergeTree(updated_at)
 --   ORDER BY (store_id, created_at)
 --   This would deduplicate by (...) pair, not globally by id.
 --   Not correct for this use case since id is the true primary key.
-ORDER BY id;
+ORDER BY id
+-- ══════════════════════════════════════════════════════════════════════════
+-- PARTITION BY: Speeds up queries by skipping irrelevant partitions
+-- ══════════════════════════════════════════════════════════════════════════
+-- Without PARTITION BY, ClickHouse scans the ENTIRE table for every query.
+-- For large tables (100M+ rows), this is slow and expensive.
+--
+-- We partition by MONTH based on created_at (which is epoch milliseconds).
+-- The formula:
+--   1. intDiv(created_at, 1000)  → convert milliseconds to seconds
+--   2. toDateTime(...)           → convert to ClickHouse DateTime
+--   3. toYYYYMM(...)             → extract year+month (e.g., 202605)
+--
+-- This means:
+--   - Queries with WHERE created_at IN (range) scan only relevant months
+--   - Old partitions can be DROPPED for data retention
+--   - Backfill only affects the target month's partition
+--
+-- Chosen over: PARTITION BY id (too many partitions, each too small)
+-- Chosen over: PARTITION BY store_id (skew — some stores have more data)
+PARTITION BY toYYYYMM(toDateTime(intDiv(created_at, 1000)));

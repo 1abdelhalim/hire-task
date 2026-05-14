@@ -108,18 +108,23 @@ def get_watermark(spark):
 def read_new_records(spark, watermark):
     """Read records from PostgreSQL where updated_at > watermark."""
     # ── Build the WHERE clause ────────────────────────────────────────────
-    # Condition 1: updated_at > watermark
-    #   → Catches rows that were UPDATED after our last sync
+    # Condition 1: updated_at >= watermark
+    #   → Uses >= (not >) to avoid missing rows where updated_at equals the
+    #     watermark exactly. This can happen when two rows share the same
+    #     millisecond timestamp and only one was synced in the previous batch.
+    #   → Using > would skip the second row permanently.
+    #   → Using >= means we MIGHT re-read the row that set the watermark,
+    #     but ReplacingMergeTree deduplication handles this safely.
     #
     # Condition 2: updated_at IS NULL AND created_at > watermark
     #   → TRICKY PART! Rows with NULL updated_at (never updated) would be
     #     missed by condition 1 alone. This fallback uses created_at instead.
     #   → Without this, newly inserted rows with NULL updated_at would only
     #     be picked up on the very FIRST run (when watermark = 0).
-    #   → After that, NULL > any_number is FALSE → rows would be MISSED.
+    #   → After that, NULL >= any_number is FALSE → rows would be MISSED.
     where = (
-        f"updated_at > {watermark} "
-        f"OR (updated_at IS NULL AND created_at > {watermark})"
+        f"updated_at >= {watermark} "
+        f"OR (updated_at IS NULL AND created_at >= {watermark})"
     )
 
     # ── Execute the query ────────────────────────────────────────────────

@@ -19,6 +19,7 @@ high-water mark on `updated_at`.
 | `verify.sql` | ClickHouse queries to verify synced data |
 | `run.sh` | One-command: start DBs → sync → verify → demo |
 | `task_explanation.md` | Full Q&A — design decisions, alternatives, interview prep |
+| `clickhouse-network.xml` | **Required config override** — ClickHouse 24.3+ Docker restricts the `default` user to localhost only. This file opens network access so the Spark job (running on the host) can connect. Mounted into the container by `docker-compose.yml`. |
 | `sample data.sql` | Raw sample data (as provided in the task) |
 
 ---
@@ -113,7 +114,9 @@ PYSPARK_PYTHON=python3.11 spark-submit \
 
 1. Query ClickHouse: `SELECT max(updated_at) FROM app_user_visits_fact`
 2. If empty → watermark = `0` (full load on first run)
-3. Read PostgreSQL: `WHERE updated_at > watermark OR (updated_at IS NULL AND created_at > watermark)`
+3. Read PostgreSQL: `WHERE updated_at >= watermark OR (updated_at IS NULL AND created_at >= watermark)`
+   - Uses `>=` (not `>`) to avoid missing rows with the exact same timestamp as the watermark
+   - ReplacingMergeTree deduplicates any duplicate rows this may re-read
 4. Append to ClickHouse (`ReplacingMergeTree` deduplicates by `id`)
 
 ---
