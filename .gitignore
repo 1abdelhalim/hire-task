@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.idea/
+.vscode/
+*.iml
+spark-warehouse/
+.spark-warehouse/
+*.log
+.DS_Store
