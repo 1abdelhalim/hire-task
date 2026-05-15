@@ -71,9 +71,11 @@ If the requirement were sub-minute latency, CDC would be the right choice.
 3. PostgreSQL is queried:
    ```sql
    SELECT * FROM app_user_visits_fact
-   WHERE updated_at > <watermark>
-      OR (updated_at IS NULL AND created_at > <watermark>)
+   WHERE updated_at >= <watermark>
+      OR (updated_at IS NULL AND created_at >= <watermark>)
    ```
+   Note: `>=` (not `>`) ensures rows with updated_at exactly equal to the watermark
+   are not missed. ReplacingMergeTree deduplicates any duplicates this causes.
 4. Those rows are appended to ClickHouse.
 5. Next run, the watermark will be higher, so only newer/changed rows are fetched.
 
@@ -89,7 +91,7 @@ If the requirement were sub-minute latency, CDC would be the right choice.
 
 **A:** The WHERE clause handles this:
 ```
-(updated_at IS NULL AND created_at > <watermark>)
+(updated_at IS NULL AND created_at >= <watermark>)
 ```
 Rows with `NULL` updated_at that were created after the watermark are still picked up. Once a row is synced once, it sits in ClickHouse. If later an update gives it a real `updated_at`, the update query will catch it.
 
@@ -158,13 +160,15 @@ This gives **at-least-once** semantics. Exactly-once would require a transaction
 - **Monitoring:** Add alerting on job failure (e.g., Spark History Server, Prometheus + Grafana)
 - **Schema evolution:** If PostgreSQL adds columns, update both the ClickHouse DDL and the Spark query
 
-### 12. Why are there two query conditions for watermark?
+### 12. Why are there two query conditions for watermark? And why `>=` not `>`?
 
 **Q: Why not just `updated_at > watermark`?**
 
-**A:** Some rows in the sample data have `updated_at IS NULL`. These are rows that were inserted but never updated. Without the second condition, they would only be picked up on the very first run (when watermark = 0). On subsequent runs, they'd be missed because `NULL > <any number>` is false.
+**A:** Two reasons:
 
-The fallback `(updated_at IS NULL AND created_at > watermark)` ensures newly inserted rows (with no update timestamp) are picked up in the correct batch window.
+1. **NULL updated_at handling**: Some rows in the sample data have `updated_at IS NULL` — rows that were inserted but never updated. Without the second condition, they would only be picked up on the very first run (when watermark = 0). On subsequent runs, they'd be missed because `NULL >= <any number>` is false. The fallback `(updated_at IS NULL AND created_at >= watermark)` ensures newly inserted rows (with no update timestamp) are picked up.
+
+2. **`>=` instead of `>`**: We use `>=` to avoid missing rows where `updated_at` exactly equals the watermark. This can happen when two rows share the same millisecond timestamp and only one was synced in the previous batch. Using `>` would skip the second row permanently. The tradeoff is we might re-read the row that set the watermark, but `ReplacingMergeTree` deduplication handles this safely.
 
 ### 13. How would you test this?
 
@@ -600,8 +604,8 @@ This installs nothing — it assumes Docker and Spark are already installed. Und
 3. `read_new_records()` queries PostgreSQL with watermark:
    ```sql
    SELECT * FROM app_user_visits_fact
-   WHERE updated_at > 0
-      OR (updated_at IS NULL AND created_at > 0)
+   WHERE updated_at >= 0
+      OR (updated_at IS NULL AND created_at >= 0)
    ```
    - Returns all 16 rows (all timestamps > 0)
 4. `df.count()` logs "Records to sync: 16"

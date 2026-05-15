@@ -116,7 +116,7 @@ def read_new_records(spark, watermark):
     #   → Using >= means we MIGHT re-read the row that set the watermark,
     #     but ReplacingMergeTree deduplication handles this safely.
     #
-    # Condition 2: updated_at IS NULL AND created_at > watermark
+    # Condition 2: updated_at IS NULL AND created_at >= watermark
     #   → TRICKY PART! Rows with NULL updated_at (never updated) would be
     #     missed by condition 1 alone. This fallback uses created_at instead.
     #   → Without this, newly inserted rows with NULL updated_at would only
