@@ -186,11 +186,11 @@ def write_to_clickhouse(df):
 def main():
     # ── Initialize Spark ─────────────────────────────────────────────────
     # appName: shows up in Spark UI — helps with monitoring/debugging
+    # fetchsize is set on the JDBC reader (read_new_records), not here.
+    # The session-level config "spark.jdbc.fetchsize" has no effect —
+    # Spark ignores it. Only the per-reader .option("fetchsize", 5000) works.
     spark = (
         SparkSession.builder.appName("pg_to_clickhouse_sync")
-        .config(
-            "spark.jdbc.fetchsize", "5000"
-        )
         .getOrCreate()
     )
 

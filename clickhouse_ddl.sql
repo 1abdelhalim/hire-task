@@ -94,20 +94,6 @@ CREATE TABLE IF NOT EXISTS default.app_user_visits_fact
 ENGINE = ReplacingMergeTree(updated_at)
 
 -- ══════════════════════════════════════════════════════════════════════════
--- ORDER BY: Defines the sort order AND the deduplication key
--- ══════════════════════════════════════════════════════════════════════════
--- ReplacingMergeTree deduplicates rows that have the same ORDER BY columns.
--- Here, ORDER BY id means: "if two rows have the same id, keep the latest one."
---
--- Performance tip: For large tables, consider ordering by (store_id, created_at)
--- instead of just id. This makes queries that filter by store much faster.
---
--- Example alternative:
---   ORDER BY (store_id, created_at)
---   This would deduplicate by (...) pair, not globally by id.
---   Not correct for this use case since id is the true primary key.
-ORDER BY id
--- ══════════════════════════════════════════════════════════════════════════
 -- PARTITION BY: Speeds up queries by skipping irrelevant partitions
 -- ══════════════════════════════════════════════════════════════════════════
 -- Without PARTITION BY, ClickHouse scans the ENTIRE table for every query.
@@ -115,9 +101,14 @@ ORDER BY id
 --
 -- We partition by MONTH based on created_at (which is epoch milliseconds).
 -- The formula:
---   1. intDiv(created_at, 1000)  → convert milliseconds to seconds
---   2. toDateTime(...)           → convert to ClickHouse DateTime
---   3. toYYYYMM(...)             → extract year+month (e.g., 202605)
+--   1. coalesce(created_at, 0)    → handle NULL: use epoch 0 (1970-01)
+--   2. intDiv(..., 1000)          → convert milliseconds to seconds
+--   3. toDateTime(...)            → convert to ClickHouse DateTime
+--   4. toYYYYMM(...)              → extract year+month (e.g., 202605)
+--
+-- Why coalesce: created_at is Nullable(Int64) in the DDL. partitionBy
+-- expressions must handle NULL — otherwise rows with NULL created_at
+-- would cause an error. coalesce falls back to epoch 0 (January 1970).
 --
 -- This means:
 --   - Queries with WHERE created_at IN (range) scan only relevant months
@@ -126,4 +117,17 @@ ORDER BY id
 --
 -- Chosen over: PARTITION BY id (too many partitions, each too small)
 -- Chosen over: PARTITION BY store_id (skew — some stores have more data)
-PARTITION BY toYYYYMM(toDateTime(intDiv(created_at, 1000)));
+PARTITION BY toYYYYMM(toDateTime(intDiv(coalesce(created_at, 0), 1000)))
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- ORDER BY: Defines the sort order AND the deduplication key
+-- ══════════════════════════════════════════════════════════════════════════
+-- ReplacingMergeTree deduplicates rows that have the same ORDER BY columns.
+-- Here, ORDER BY id means: "if two rows have the same id, keep the latest one."
+--
+-- Important: PARTITION BY must come BEFORE ORDER BY in ClickHouse syntax.
+-- See ClickHouse docs: CREATE TABLE → PARTITION BY clause → ORDER BY clause.
+--
+-- Performance tip: For large tables, consider ordering by (store_id, created_at)
+-- instead of just id. This makes queries that filter by store much faster.
+ORDER BY id;
